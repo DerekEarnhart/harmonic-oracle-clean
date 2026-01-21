@@ -5,9 +5,9 @@ export const getLoginUrl = () => {
   const oauthPortalUrl = import.meta.env.VITE_OAUTH_PORTAL_URL;
   const appId = import.meta.env.VITE_APP_ID;
   
-  // If OAuth is not configured, return empty string (demo mode)
+  // If OAuth is not configured, return '#' to prevent navigation (demo mode)
   if (!oauthPortalUrl || !appId) {
-    return '';
+    return '#';
   }
   
   const redirectUri = `${window.location.origin}/api/oauth/callback`;
@@ -20,4 +20,11 @@ export const getLoginUrl = () => {
   url.searchParams.set("type", "signIn");
 
   return url.toString();
+};
+
+// Check if OAuth is configured
+export const isOAuthConfigured = () => {
+  const oauthPortalUrl = import.meta.env.VITE_OAUTH_PORTAL_URL;
+  const appId = import.meta.env.VITE_APP_ID;
+  return Boolean(oauthPortalUrl && appId);
 };

@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { CognitiveModeBadge } from "@/components/CognitiveModeSelector";
 import { CognitiveMetrics } from "@/components/CognitiveMetrics";
-import { getLoginUrl } from "@/const";
+import { getLoginUrl, isOAuthConfigured } from "@/const";
 import { Link } from "wouter";
 import { AppShell } from "@/components/AppShell";
 import { 
@@ -36,7 +36,8 @@ export default function History() {
     { enabled: selectedId !== null }
   );
 
-  if (!isAuthenticated) {
+  // Only show sign-in prompt if OAuth is configured
+  if (!isAuthenticated && isOAuthConfigured()) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <Card className="max-w-md">

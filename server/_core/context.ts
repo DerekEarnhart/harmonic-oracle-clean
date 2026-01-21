@@ -17,8 +17,8 @@ export async function createContext(
     user = await sdk.authenticateRequest(opts.req);
   } catch (error) {
     // Authentication is optional for public procedures.
-    // In development/demo mode without OAuth, provide a mock user
-    if (!process.env.OAUTH_SERVER_URL && process.env.NODE_ENV !== 'production') {
+    // In demo mode without OAuth, provide a mock user
+    if (!process.env.OAUTH_SERVER_URL) {
       user = {
         id: 1,
         openId: 'demo-user',

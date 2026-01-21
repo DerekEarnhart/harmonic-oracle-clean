@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
 import { trpc } from "@/lib/trpc";
-import { getLoginUrl } from "@/const";
+import { getLoginUrl, isOAuthConfigured } from "@/const";
 import { Code2, Copy, Download, Loader2, Sparkles } from "lucide-react";
 
 function codeOnlyPrompt(request: string) {
@@ -75,7 +75,8 @@ export default function CodeSynthesis() {
     URL.revokeObjectURL(url);
   }
 
-  if (!isAuthenticated) {
+  // Only show login prompt if OAuth is configured
+  if (!isAuthenticated && isOAuthConfigured()) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <Card className="max-w-md">
