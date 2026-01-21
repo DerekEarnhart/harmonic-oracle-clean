@@ -67,6 +67,11 @@ async function startServer() {
     }
   });
 
+  // Health check endpoint for Railway
+  app.get("/api/health", (_req, res) => {
+    res.status(200).json({ status: "ok", message: "Harmonic Oracle is running" });
+  });
+
   // OAuth callback under /api/oauth/callback
   registerOAuthRoutes(app);
   // tRPC API
