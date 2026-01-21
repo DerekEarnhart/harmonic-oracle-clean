@@ -29,13 +29,17 @@ async function findAvailablePort(startPort: number = 3000): Promise<number> {
 }
 
 async function startServer() {
+  console.log("[Server] Starting server initialization...");
+  
   // Run database migrations before starting the server
   try {
     await runMigrations();
+    console.log("[Server] Migrations completed, continuing startup");
   } catch (error) {
     console.error("[Server] Failed to run migrations, but continuing startup:", error);
   }
 
+  console.log("[Server] Creating Express app and HTTP server...");
   const app = express();
   const server = createServer(app);
   // Configure body parser with larger size limit for file uploads
@@ -83,11 +87,13 @@ async function startServer() {
     })
   );
   // development mode uses Vite, production mode uses static files
+  console.log(`[Server] NODE_ENV=${process.env.NODE_ENV}, setting up ${process.env.NODE_ENV === "development" ? "Vite" : "static file serving"}...`);
   if (process.env.NODE_ENV === "development") {
     await setupVite(app, server);
   } else {
     serveStatic(app);
   }
+  console.log("[Server] File serving configured");
 
   const preferredPort = parseInt(process.env.PORT || "3000");
   const port = await findAvailablePort(preferredPort);
@@ -96,9 +102,11 @@ async function startServer() {
     console.log(`Port ${preferredPort} is busy, using port ${port} instead`);
   }
 
+  console.log(`[Server] About to start listening on port ${port}...`);
   server.listen(port, '0.0.0.0', () => {
-    console.log(`Server running on http://0.0.0.0:${port}/`);
+    console.log(`[Server] ✅ Server running on http://0.0.0.0:${port}/`);
   });
+  console.log("[Server] server.listen() called, waiting for callback...");
 }
 
 startServer().catch(console.error);
