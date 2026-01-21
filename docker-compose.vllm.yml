@@ -1,0 +1,97 @@
+version: '3.8'
+
+services:
+  vllm:
+    image: vllm/vllm-openai:latest
+    container_name: harmonic-oracle-vllm
+    ports:
+      - "8000:8000"
+    environment:
+      # Model configuration
+      - MODEL_NAME=meta-llama/Llama-3.3-70B-Instruct
+      # For testing with smaller model, use:
+      # - MODEL_NAME=meta-llama/Llama-3.1-8B-Instruct
+      
+      # GPU configuration
+      - TENSOR_PARALLEL_SIZE=2  # Number of GPUs to use
+      - GPU_MEMORY_UTILIZATION=0.95
+      
+      # Context length
+      - MAX_MODEL_LEN=32768
+      
+      # Performance tuning
+      - MAX_NUM_SEQS=256
+      - ENABLE_CHUNKED_PREFILL=true
+      
+      # Security (optional)
+      - VLLM_API_KEY=${VLLM_API_KEY:-}
+      
+      # HuggingFace token (required for gated models)
+      - HUGGING_FACE_HUB_TOKEN=${HUGGING_FACE_HUB_TOKEN:-}
+    
+    volumes:
+      # Cache downloaded models
+      - vllm-models:/root/.cache/huggingface
+    
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 2  # Number of GPUs
+              capabilities: [gpu]
+    
+    command: >
+      --model ${MODEL_NAME:-meta-llama/Llama-3.3-70B-Instruct}
+      --tensor-parallel-size ${TENSOR_PARALLEL_SIZE:-2}
+      --gpu-memory-utilization ${GPU_MEMORY_UTILIZATION:-0.95}
+      --max-model-len ${MAX_MODEL_LEN:-32768}
+      --max-num-seqs ${MAX_NUM_SEQS:-256}
+      --host 0.0.0.0
+      --port 8000
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 300s  # Model loading takes time
+
+volumes:
+  vllm-models:
+    driver: local
+
+# Usage:
+# 1. Install NVIDIA Container Toolkit:
+#    curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+#    curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | \
+#      sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
+#      sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+#    sudo apt-get update
+#    sudo apt-get install -y nvidia-container-toolkit
+#    sudo nvidia-ctk runtime configure --runtime=docker
+#    sudo systemctl restart docker
+#
+# 2. Set environment variables (optional):
+#    export VLLM_API_KEY=your-api-key
+#    export HUGGING_FACE_HUB_TOKEN=your-hf-token
+#    export MODEL_NAME=meta-llama/Llama-3.1-8B-Instruct  # For testing with smaller model
+#
+# 3. Start vLLM:
+#    docker-compose -f docker-compose.vllm.yml up -d
+#
+# 4. Check logs:
+#    docker-compose -f docker-compose.vllm.yml logs -f
+#
+# 5. Test endpoint:
+#    curl http://localhost:8000/v1/chat/completions \
+#      -H "Content-Type: application/json" \
+#      -H "Authorization: Bearer your-api-key" \
+#      -d '{
+#        "model": "meta-llama/Llama-3.3-70B-Instruct",
+#        "messages": [{"role": "user", "content": "Hello!"}],
+#        "max_tokens": 100
+#      }'
+#
+# 6. Stop vLLM:
+#    docker-compose -f docker-compose.vllm.yml down

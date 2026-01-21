@@ -209,14 +209,22 @@ const normalizeToolChoice = (
   return toolChoice;
 };
 
-const resolveApiUrl = () =>
-  ENV.forgeApiUrl && ENV.forgeApiUrl.trim().length > 0
-    ? `${ENV.forgeApiUrl.replace(/\/$/, "")}/v1/chat/completions`
-    : "https://forge.manus.im/v1/chat/completions";
+const resolveApiUrl = () => {
+  // Support custom LLM endpoint (e.g., vLLM, Ollama, or any OpenAI-compatible API)
+  if (ENV.llmApiUrl && ENV.llmApiUrl.trim().length > 0) {
+    return `${ENV.llmApiUrl.replace(/\/$/, "")}/v1/chat/completions`;
+  }
+  // Fallback to Manus Forge API
+  if (ENV.forgeApiUrl && ENV.forgeApiUrl.trim().length > 0) {
+    return `${ENV.forgeApiUrl.replace(/\/$/, "")}/v1/chat/completions`;
+  }
+  return "https://forge.manus.im/v1/chat/completions";
+};
 
 const assertApiKey = () => {
-  if (!ENV.forgeApiKey) {
-    throw new Error("OPENAI_API_KEY is not configured");
+  // Check for LLM API key (vLLM, Ollama, or custom endpoint)
+  if (!ENV.llmApiKey && !ENV.forgeApiKey) {
+    throw new Error("LLM API key is not configured. Set LLM_API_KEY or BUILT_IN_FORGE_API_KEY environment variable.");
   }
 };
 
@@ -279,8 +287,11 @@ export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
     response_format,
   } = params;
 
+  // Use configurable model (defaults to Llama 3.3 70B for vLLM)
+  const model = ENV.llmModel || "meta-llama/Llama-3.3-70B-Instruct";
+  
   const payload: Record<string, unknown> = {
-    model: "gemini-2.5-flash",
+    model: model,
     messages: messages.map(normalizeMessage),
   };
 
@@ -296,9 +307,14 @@ export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
     payload.tool_choice = normalizedToolChoice;
   }
 
-  payload.max_tokens = 32768
-  payload.thinking = {
-    "budget_tokens": 128
+  // Set max_tokens (vLLM supports up to model's context length)
+  payload.max_tokens = ENV.llmMaxTokens || 32768;
+  
+  // Only add thinking parameter for models that support it (like Gemini)
+  if (model.includes("gemini")) {
+    payload.thinking = {
+      "budget_tokens": 128
+    };
   }
 
   const normalizedResponseFormat = normalizeResponseFormat({
@@ -312,11 +328,14 @@ export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
     payload.response_format = normalizedResponseFormat;
   }
 
+  // Use LLM_API_KEY if available, otherwise fall back to BUILT_IN_FORGE_API_KEY
+  const apiKey = ENV.llmApiKey || ENV.forgeApiKey;
+  
   const response = await fetch(resolveApiUrl(), {
     method: "POST",
     headers: {
       "content-type": "application/json",
-      authorization: `Bearer ${ENV.forgeApiKey}`,
+      authorization: `Bearer ${apiKey}`,
     },
     body: JSON.stringify(payload),
   });
