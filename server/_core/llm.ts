@@ -212,7 +212,12 @@ const normalizeToolChoice = (
 const resolveApiUrl = () => {
   // Support custom LLM endpoint (e.g., vLLM, Ollama, or any OpenAI-compatible API)
   if (ENV.llmApiUrl && ENV.llmApiUrl.trim().length > 0) {
-    return `${ENV.llmApiUrl.replace(/\/$/, "")}/v1/chat/completions`;
+    const baseUrl = ENV.llmApiUrl.replace(/\/$/, "");
+    // If URL already ends with /v1, don't add it again
+    if (baseUrl.endsWith('/v1')) {
+      return `${baseUrl}/chat/completions`;
+    }
+    return `${baseUrl}/v1/chat/completions`;
   }
   // Fallback to Manus Forge API
   if (ENV.forgeApiUrl && ENV.forgeApiUrl.trim().length > 0) {
