@@ -6,45 +6,117 @@ $Output = Join-Path $RepoRoot 'stage2_artifacts'
 $JuliaScript = Join-Path $Here 'frozen_orbit_test.jl'
 $PythonScript = Join-Path $Here 'analyze_residuals.py'
 
+function Find-LocalExecutable {
+    param([Parameter(Mandatory = $true)][string]$Name)
+
+    $Command = Get-Command $Name -ErrorAction SilentlyContinue
+    if ($Command) {
+        return $Command.Source
+    }
+
+    $Candidates = @(
+        (Join-Path $env:USERPROFILE ('.juliaup\bin\' + $Name + '.exe')),
+        (Join-Path $env:LOCALAPPDATA ('Microsoft\WindowsApps\' + $Name + '.exe'))
+    )
+
+    foreach ($Candidate in $Candidates) {
+        if (Test-Path $Candidate) {
+            return $Candidate
+        }
+    }
+
+    return $null
+}
+
+function Refresh-JuliaPaths {
+    $JuliaupBin = Join-Path $env:USERPROFILE '.juliaup\bin'
+    $WindowsApps = Join-Path $env:LOCALAPPDATA 'Microsoft\WindowsApps'
+
+    foreach ($PathEntry in @($JuliaupBin, $WindowsApps)) {
+        if ((Test-Path $PathEntry) -and (-not (($env:Path -split ';') -contains $PathEntry))) {
+            $env:Path = $PathEntry + ';' + $env:Path
+        }
+    }
+}
+
 Write-Host '3I/ATLAS Jupiter Gate - Stage 2'
 Write-Host ('Repository: ' + $RepoRoot)
 Write-Host ('Output: ' + $Output)
 
-$JuliaCommand = Get-Command julia -ErrorAction SilentlyContinue
+Refresh-JuliaPaths
+$JuliaExe = Find-LocalExecutable -Name 'julia'
+$JuliaupExe = Find-LocalExecutable -Name 'juliaup'
 
-if (-not $JuliaCommand) {
-    Write-Host 'Julia 1.12 was not found. Installing it with winget...'
-    & winget install --id Julialang.Julia.1.12 --exact --accept-package-agreements --accept-source-agreements
+if (-not $JuliaExe) {
+    Write-Host 'Julia was not found. Trying the official Microsoft Store Juliaup package...'
+
+    & winget source update
+    & winget install --name Julia --id 9NJNWW8PVKMN --exact --source msstore --accept-package-agreements --accept-source-agreements
+    $WingetSucceeded = ($LASTEXITCODE -eq 0)
+
+    Refresh-JuliaPaths
+    $JuliaExe = Find-LocalExecutable -Name 'julia'
+    $JuliaupExe = Find-LocalExecutable -Name 'juliaup'
+
+    if ((-not $WingetSucceeded) -or ((-not $JuliaExe) -and (-not $JuliaupExe))) {
+        Write-Host 'Microsoft Store installation was unavailable. Using the official Juliaup MSI fallback...'
+
+        $MsiPath = Join-Path $env:TEMP 'Julia-x64.msi'
+        Invoke-WebRequest -Uri 'https://install.julialang.org/Julia-x64.msi' -OutFile $MsiPath -UseBasicParsing
+
+        $MsiProcess = Start-Process -FilePath 'msiexec.exe' -ArgumentList @(
+            '/i',
+            ('"' + $MsiPath + '"'),
+            '/qn',
+            '/norestart'
+        ) -Wait -PassThru
+
+        if ($MsiProcess.ExitCode -ne 0) {
+            throw ('Official Juliaup MSI installation failed with exit code ' + $MsiProcess.ExitCode + '.')
+        }
+
+        Refresh-JuliaPaths
+        $JuliaExe = Find-LocalExecutable -Name 'julia'
+        $JuliaupExe = Find-LocalExecutable -Name 'juliaup'
+    }
+}
+
+if ($JuliaupExe) {
+    Write-Host ('Using Juliaup: ' + $JuliaupExe)
+    Write-Host 'Ensuring the Julia 1.12 channel is installed...'
+
+    & $JuliaupExe add 1.12
     if ($LASTEXITCODE -ne 0) {
-        throw 'winget could not install Julia 1.12.'
+        throw 'Juliaup could not install the Julia 1.12 channel.'
     }
 
-    $JuliaCandidate = Get-ChildItem -Path (Join-Path $env:LOCALAPPDATA 'Programs\Julia-*\bin\julia.exe') -ErrorAction SilentlyContinue |
-        Sort-Object -Property FullName -Descending |
-        Select-Object -First 1
-
-    if ($JuliaCandidate) {
-        $JuliaBin = Split-Path -Parent $JuliaCandidate.FullName
-        $env:Path = $JuliaBin + ';' + $env:Path
+    & $JuliaupExe default 1.12
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Juliaup could not set Julia 1.12 as the default channel.'
     }
 
-    $JuliaCommand = Get-Command julia -ErrorAction SilentlyContinue
+    Refresh-JuliaPaths
+    $JuliaExe = Find-LocalExecutable -Name 'julia'
 }
 
-if (-not $JuliaCommand) {
-    throw 'Julia installation was not found. Close and reopen PowerShell, then rerun this script.'
+if (-not $JuliaExe) {
+    throw 'Julia installation completed, but julia.exe could not be located. Close and reopen PowerShell, then rerun this script.'
 }
 
-Write-Host ('Using Julia: ' + $JuliaCommand.Source)
+Write-Host ('Using Julia: ' + $JuliaExe)
+& $JuliaExe --version
+if ($LASTEXITCODE -ne 0) {
+    throw 'Julia was located but could not start.'
+}
 
 Write-Host 'Instantiating the Julia environment...'
-& julia ('--project=' + $Here) -e 'import Pkg; Pkg.instantiate()'
+& $JuliaExe ('--project=' + $Here) -e 'import Pkg; Pkg.instantiate()'
 if ($LASTEXITCODE -ne 0) {
     throw 'Julia package installation failed.'
 }
 
 Write-Host 'Running frozen pre-cutoff orbit determination...'
-& julia -t auto ('--project=' + $Here) $JuliaScript -d $Output
+& $JuliaExe -t auto ('--project=' + $Here) $JuliaScript -d $Output
 if ($LASTEXITCODE -ne 0) {
     throw 'The frozen orbit calculation failed.'
 }
