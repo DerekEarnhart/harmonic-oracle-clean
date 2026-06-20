@@ -5,6 +5,7 @@ $RepoRoot = (Resolve-Path (Join-Path $Here '..\..')).Path
 $Output = Join-Path $RepoRoot 'stage2_artifacts'
 $JuliaScript = Join-Path $Here 'frozen_orbit_test.jl'
 $PythonScript = Join-Path $Here 'analyze_residuals.py'
+$JuliaLog = Join-Path $Output 'julia_stage2.log'
 
 function Find-LocalExecutable {
     param([Parameter(Mandatory = $true)][string]$Name)
@@ -39,9 +40,35 @@ function Refresh-JuliaPaths {
     }
 }
 
+function Run-JuliaLogged {
+    param(
+        [Parameter(Mandatory = $true)][string[]]$Arguments,
+        [Parameter(Mandatory = $true)][string]$LogPath
+    )
+
+    & $script:JuliaExe @Arguments 2>&1 | Tee-Object -FilePath $LogPath -Append
+    return $LASTEXITCODE
+}
+
 Write-Host '3I/ATLAS Jupiter Gate - Stage 2'
 Write-Host ('Repository: ' + $RepoRoot)
 Write-Host ('Output: ' + $Output)
+
+New-Item -ItemType Directory -Force -Path $Output | Out-Null
+
+$Drive = Get-PSDrive -Name C
+$FreeGB = [math]::Round($Drive.Free / 1GB, 2)
+Write-Host ('Free space on C: ' + $FreeGB + ' GB')
+if ($FreeGB -lt 2.0) {
+    throw 'At least 2 GB of free C: drive space is required before running Stage 2.'
+}
+
+$OsInfo = Get-CimInstance Win32_OperatingSystem
+$FreeRamGB = [math]::Round(($OsInfo.FreePhysicalMemory * 1KB) / 1GB, 2)
+Write-Host ('Available physical memory: ' + $FreeRamGB + ' GB')
+if ($FreeRamGB -lt 1.5) {
+    Write-Warning 'Available RAM is very low. Close browsers and other large applications before continuing.'
+}
 
 Refresh-JuliaPaths
 $JuliaExe = Find-LocalExecutable -Name 'julia'
@@ -83,18 +110,14 @@ if (-not $JuliaExe) {
 
 if ($JuliaupExe) {
     Write-Host ('Using Juliaup: ' + $JuliaupExe)
-    Write-Host 'Ensuring the Julia 1.12 channel is installed...'
-
     & $JuliaupExe add 1.12
     if ($LASTEXITCODE -ne 0) {
         throw 'Juliaup could not install the Julia 1.12 channel.'
     }
-
     & $JuliaupExe default 1.12
     if ($LASTEXITCODE -ne 0) {
         throw 'Juliaup could not set Julia 1.12 as the default channel.'
     }
-
     Refresh-JuliaPaths
     $JuliaExe = Find-LocalExecutable -Name 'julia'
 }
@@ -109,16 +132,81 @@ if ($LASTEXITCODE -ne 0) {
     throw 'Julia was located but could not start.'
 }
 
-Write-Host 'Instantiating the Julia environment...'
-& $JuliaExe ('--project=' + $Here) -e 'import Pkg; Pkg.instantiate()'
-if ($LASTEXITCODE -ne 0) {
-    throw 'Julia package installation failed.'
+# The first run exhausted memory because Julia launched many precompile workers.
+# Force all package loading and computation into a single low-memory process.
+$env:JULIA_NUM_THREADS = '1'
+$env:JULIA_NUM_PRECOMPILE_TASKS = '1'
+$env:JULIA_PKG_PRECOMPILE_AUTO = '0'
+$env:OPENBLAS_NUM_THREADS = '1'
+$env:OMP_NUM_THREADS = '1'
+
+if (Test-Path $JuliaLog) {
+    Remove-Item $JuliaLog -Force
 }
 
-Write-Host 'Running frozen pre-cutoff orbit determination...'
-& $JuliaExe -t auto ('--project=' + $Here) $JuliaScript -d $Output
-if ($LASTEXITCODE -ne 0) {
-    throw 'The frozen orbit calculation failed.'
+Write-Host 'Instantiating packages without automatic parallel precompilation...'
+$InstantiateArgs = @(
+    '--startup-file=no',
+    '--history-file=no',
+    '--threads=1',
+    ('--project=' + $Here),
+    '-e',
+    'import Pkg; Pkg.instantiate(; allow_autoprecomp=false)'
+)
+$InstantiateExit = Run-JuliaLogged -Arguments $InstantiateArgs -LogPath $JuliaLog
+if ($InstantiateExit -ne 0) {
+    throw ('Julia package setup failed. See ' + $JuliaLog)
+}
+
+Write-Host 'Loading NEOs serially as a memory-safe smoke test...'
+$SmokeArgs = @(
+    '--startup-file=no',
+    '--history-file=no',
+    '--threads=1',
+    ('--project=' + $Here),
+    '-e',
+    'using NEOs; println("NEOs serial load succeeded")'
+)
+$SmokeExit = Run-JuliaLogged -Arguments $SmokeArgs -LogPath $JuliaLog
+if ($SmokeExit -ne 0) {
+    Write-Warning 'Normal package loading failed. Retrying without compiled package images.'
+    $SmokeFallbackArgs = @(
+        '--startup-file=no',
+        '--history-file=no',
+        '--threads=1',
+        '--compiled-modules=no',
+        '--pkgimages=no',
+        ('--project=' + $Here),
+        '-e',
+        'using NEOs; println("NEOs source-only load succeeded")'
+    )
+    $SmokeExit = Run-JuliaLogged -Arguments $SmokeFallbackArgs -LogPath $JuliaLog
+    if ($SmokeExit -ne 0) {
+        throw ('NEOs could not load even in low-memory mode. See ' + $JuliaLog)
+    }
+    $UseSourceOnly = $true
+} else {
+    $UseSourceOnly = $false
+}
+
+Write-Host 'Running frozen pre-cutoff orbit determination with one Julia thread...'
+$OrbitArgs = @(
+    '--startup-file=no',
+    '--history-file=no',
+    '--threads=1'
+)
+if ($UseSourceOnly) {
+    $OrbitArgs += '--compiled-modules=no'
+    $OrbitArgs += '--pkgimages=no'
+}
+$OrbitArgs += ('--project=' + $Here)
+$OrbitArgs += $JuliaScript
+$OrbitArgs += '-d'
+$OrbitArgs += $Output
+
+$OrbitExit = Run-JuliaLogged -Arguments $OrbitArgs -LogPath $JuliaLog
+if ($OrbitExit -ne 0) {
+    throw ('The frozen orbit calculation failed. Upload ' + $JuliaLog + ' so the actual Julia error can be diagnosed.')
 }
 
 Write-Host 'Installing Python analysis packages...'
