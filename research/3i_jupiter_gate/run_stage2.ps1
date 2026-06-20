@@ -71,7 +71,7 @@ if (-not $JuliaExe) {
             '/norestart'
         ) -Wait -PassThru
 
-        if ($MsiProcess.ExitCode -ne 0) {
+        if ($MsiProcess.ExitCode -notin @(0, 3010)) {
             throw ('Official Juliaup MSI installation failed with exit code ' + $MsiProcess.ExitCode + '.')
         }
 
