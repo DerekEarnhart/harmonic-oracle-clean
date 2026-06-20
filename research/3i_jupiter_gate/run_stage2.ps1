@@ -46,8 +46,19 @@ function Run-JuliaLogged {
         [Parameter(Mandatory = $true)][string]$LogPath
     )
 
-    & $script:JuliaExe @Arguments 2>&1 | Tee-Object -FilePath $LogPath -Append
-    return $LASTEXITCODE
+    # Windows PowerShell 5.1 converts native stderr into PowerShell error records.
+    # Temporarily allow those records so Julia can finish and we can inspect its exit code.
+    $PreviousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        & $script:JuliaExe @Arguments 2>&1 | Tee-Object -FilePath $LogPath -Append
+        $ExitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $PreviousErrorActionPreference
+    }
+
+    return $ExitCode
 }
 
 Write-Host '3I/ATLAS Jupiter Gate - Stage 2'
@@ -66,8 +77,11 @@ if ($FreeGB -lt 2.0) {
 $OsInfo = Get-CimInstance Win32_OperatingSystem
 $FreeRamGB = [math]::Round(($OsInfo.FreePhysicalMemory * 1KB) / 1GB, 2)
 Write-Host ('Available physical memory: ' + $FreeRamGB + ' GB')
-if ($FreeRamGB -lt 1.5) {
-    Write-Warning 'Available RAM is very low. Close browsers and other large applications before continuing.'
+if ($FreeRamGB -lt 1.25) {
+    throw 'Available RAM is too low. Restart Windows, do not open a browser, then run this script first. At least 1.25 GB free is required; 2 GB or more is strongly preferred.'
+}
+if ($FreeRamGB -lt 2.0) {
+    Write-Warning 'Available RAM is limited. Keep all browsers and large applications closed while Stage 2 runs.'
 }
 
 Refresh-JuliaPaths
@@ -165,7 +179,7 @@ $SmokeArgs = @(
     '--threads=1',
     ('--project=' + $Here),
     '-e',
-    'using NEOs; println("NEOs serial load succeeded")'
+    'using NEOs'
 )
 $SmokeExit = Run-JuliaLogged -Arguments $SmokeArgs -LogPath $JuliaLog
 if ($SmokeExit -ne 0) {
@@ -178,7 +192,7 @@ if ($SmokeExit -ne 0) {
         '--pkgimages=no',
         ('--project=' + $Here),
         '-e',
-        'using NEOs; println("NEOs source-only load succeeded")'
+        'using NEOs'
     )
     $SmokeExit = Run-JuliaLogged -Arguments $SmokeFallbackArgs -LogPath $JuliaLog
     if ($SmokeExit -ne 0) {
